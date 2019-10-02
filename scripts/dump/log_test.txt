@@ -1,0 +1,16 @@
+Model restored.
+Start testing.
+accuracy all: 0.908866
+accuracy classes: 0.903333
+accuracy for each class:
+   bathtub : 0.861667
+   bed : 0.926667
+   chair : 0.986667
+   desk : 0.819767
+   dresser : 0.837209
+   monitor : 0.985833
+   night_stand : 0.843023
+   sofa : 0.978333
+   table : 0.821667
+   toilet : 0.972500
+Total running time: 65.034 seconds
