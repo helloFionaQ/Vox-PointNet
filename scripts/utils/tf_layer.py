@@ -17,7 +17,7 @@ def _variable_on_cpu(name, shape, initializer, use_fp16=False):
     Returns:
       Variable Tensor
     """
-    with tf.device('/cpu:0'):
+    with tf.device('/gpu:0'):
         dtype = tf.float16 if use_fp16 else tf.float32
         var = tf.get_variable(name, shape, initializer=initializer, dtype=dtype)
     return var
@@ -48,6 +48,7 @@ def _variable_with_weight_decay(name, shape, stddev, wd, use_xavier=True):
     if wd is not None:
         weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
         tf.add_to_collection('losses', weight_decay)
+        tf.summary.scalar('L2 loss', weight_decay)
     return var
 
 
@@ -570,3 +571,10 @@ def dropout(inputs,
                           lambda: tf.nn.dropout(inputs, keep_prob, noise_shape),
                           lambda: inputs)
         return outputs
+
+
+def leaky_relu(x, leak=0.1, name="leaky_relu"):
+    with tf.variable_scope(name):
+        f1 = 0.5 * (1 + leak)
+        f2 = 0.5 * (1 - leak)
+        return f1 * x + f2 * tf.abs(x)

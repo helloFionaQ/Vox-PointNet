@@ -1,101 +1,106 @@
 import tensorflow as tf
-import numpy as np
-from model import config
-import argparse
-import math
-import h5py
-import numpy as np
-import tensorflow as tf
-import socket
-import importlib
-import os
-import sys
-from utils import npytar
-
-CONFIG = tf.ConfigProto()
-CONFIG.gpu_options.allow_growth = True
-CONFIG.allow_soft_placement = True
-CONFIG.log_device_placement = False
-GPU_INDEX =0
-LOG_DIR = 'log'
-cfg = config.cfg
-dims = cfg['dims']
-max_epochs=cfg['max_epochs']
-fname=r'/home/haha/Documents/PythonPrograms/datasets/shapenet10_train.tar'
-
-def jitter_chunk(src):
-    dst = src.copy()
-    if np.random.binomial(1, .2):
-        dst[:, :, ::-1, :, :] = dst
-    if np.random.binomial(1, .2):
-        dst[:, :, :, ::-1, :] = dst
-    max_ij = cfg['max_jitter_ij']
-    max_k = cfg['max_jitter_k']
-    shift_ijk = [np.random.random_integers(-max_ij, max_ij),
-                 np.random.random_integers(-max_ij, max_ij),
-                 np.random.random_integers(-max_k, max_k)]
-    for axis, shift in enumerate(shift_ijk):
-        if shift != 0:
-            # beware wraparound
-            dst = np.roll(dst, shift, axis+2)
-    return dst
+from utils import tf_layer
 
 
-def data_loader(fname):
+cfg = {'batch_size': 32,
+       'reg': 0.001,
+       'momentum': 0.9,
+       'dims': (32, 32, 32),
+       'n_channels': 1,
+       'n_classes': 10,
+       'batches_per_chunk': 64,
+       'max_epochs': 80,
+       'max_jitter_ij': 2,
+       'max_jitter_k': 2,
+       'n_rotations': 12,
+       'checkpoint_every_nth': 4000,
 
-    dims = cfg['dims']
-    chunk_size = cfg['batch_size']*cfg['batches_per_chunk']
-    xc = np.zeros((chunk_size, cfg['n_channels'],)+dims, dtype=np.float32)
-    reader = npytar.NpyTarReader(fname)
-    yc = []
-    for ix, (x, name) in enumerate(reader):
-        return x,int(name.split('.')[0])-1
+       'optimizer':'momentum',
+       'base_learning_rate':0.002,
+       'decay_step':500000,
+       'decay_rate':0.5,
 
+       'n_rings':99,
+       'n_levels':15,
 
-
-
-def train():
-    with tf.Graph().as_default():
-        with tf.device('/gpu:'+str(GPU_INDEX)):
-            batch_index = tf.placeholder(tf.int32, name='batch_index')  # batch_index = T.iscalar('batch_index')
-            X_pl = tf.placeholder(tf.float32, shape=[32,32,32 ], name='X')  # X = T.TensorType('float32', [False]*5)('X')
-            y_pl = tf.placeholder(tf.float32, shape=[None, ], name='y')  # y = T.TensorType('int32', [False]*1)('y')
-            is_training_pl = tf.placeholder(tf.bool, shape=())
-            batch_slice = slice(batch_index * cfg['batch_size'], (batch_index + 1) * cfg['batch_size'])
-            yhat=config.get_model(model=X_pl,is_training=is_training_pl,bn_decay=None)
-
-            # Add ops to save and restore all the variables.
-            saver = tf.train.Saver()
-
-        # Create a session
-        sess = tf.Session(config=CONFIG)
-
-        # Init variables
-        init = tf.global_variables_initializer()
-        sess.run(init, {is_training_pl: True})
-
-        ops = {'X_pl': X_pl,
-               # 'y_pl': y_pl,
-               'is_training_pl': is_training_pl,
-               }
-
-        x,name=data_loader(fname)
-        feed_dict = {ops['X_pl']:x ,
-                     ops['is_training_pl']: True, }
-
-        print sess.run(yhat,feed_dict=feed_dict)
+       }
+'''
+ARGS
+    model:  5D-tensor B*DIMS(DIMS:32*32*32)
+'''
 
 
+def get_model(model, is_training, bn_decay=None):
+    '''change into B*DIMS*C'''
+    n_classes=cfg['n_classes']
+    batch_size = model.get_shape()[0].value
+    weight_decay=cfg['reg'] # L2 reg
+    n_rings,n_levels= cfg['n_rings'], cfg['n_levels']
+
+    # TODO pack the activations into layers
+    input_model=tf.reshape(model,(-1,n_rings,3))
+    input_model = tf.expand_dims(input_model, -1)
+    net = tf_layer.conv2d(input_model, 64, [1,3],
+                          padding='VALID', stride=[1, 1], bn=True, is_training=is_training,
+                          scope='conv1', bn_decay=bn_decay,weight_decay=weight_decay,activation_fn=tf_layer.leaky_relu)
+    # print 'Shape after conv1 :',net.shape
+    # TODO revise reshape: we don't need reshape
+    # net=tf.reshape(net,(batch_size,n_levels,n_rings,-1))
+    # print 'Shape after reshape1 :', net.shape
+
+    # net = tf_layer.conv2d(net, 64, [1,1],
+    #                       padding='VALID', stride=[1, 1], bn=True, is_training=is_training,
+    #                       scope='conv2', bn_decay=bn_decay,weight_decay=weight_decay)
+    # net = tf_layer.leaky_relu(net)
+
+    net = tf_layer.conv2d(net, 64, [1,1],
+                          padding='VALID', stride=[1, 1], bn=True, is_training=is_training,
+                          scope='conv2', bn_decay=bn_decay,weight_decay=weight_decay,
+                          activation_fn=tf_layer.leaky_relu)
+    net = tf_layer.conv2d(net, 128, [1,1],
+                          padding='VALID', stride=[1, 1], bn=True, is_training=is_training,
+                          scope='conv3', bn_decay=bn_decay,weight_decay=weight_decay,
+                          activation_fn=tf_layer.leaky_relu)
+    # print 'Shape after conv2 :', net.shape
+    net = tf_layer.conv2d(net, 512, [1,1],
+                          padding='VALID', stride=[1, 1], bn=True, is_training=is_training,
+                          scope='conv4', bn_decay=bn_decay,weight_decay=weight_decay,
+                          activation_fn=tf_layer.leaky_relu)
+    # print 'Shape after conv3 :', net.shape
+    net = tf.reshape(net, (-1, n_rings, 512))
+    net = tf.expand_dims(net, -1)
+    net = tf_layer.max_pool2d(net, kernel_size=[1,512],stride=[1,512] , scope='pool1',padding='VALID')
+
+    # net=tf.transpose(net,perm=[0,1,2,4,3])
+    # net=tf.nn.max_pool(net,ksize=[1, 1, 1, 512],strides=[1, 1, 1, 512],padding='VALID',
+    #                     name='pool1')
+    net = tf.reshape(net, (batch_size*n_levels, -1))
 
 
-def train_one_epoch(sess, ops, train_writer):
-    """ ops: dict mapping from string to tf ops """
-    is_training = True
-    loader = (data_loader(cfg, fname))
-    for X, y in loader:
-        num_batches = len(X) // cfg['batch_size']
-        feed_dict = {ops['X_pl']: X,
-                     ops['y_pl']: y,
-                     ops['is_training_pl']: is_training, }
+    net = tf_layer.fully_connected(net, 128, bn=True, is_training=is_training,
+                                   scope='fc1', bn_decay=bn_decay,weight_decay=weight_decay)
+    net = tf_layer.fully_connected(net, 1, bn=True, is_training=is_training,
+                                   scope='fc2', bn_decay=bn_decay,weight_decay=weight_decay)
+    net = tf.reshape(net, (batch_size, -1))
+    net = tf_layer.fully_connected(net, 1024, bn=True, is_training=is_training,
+                                   scope='fc3', bn_decay=bn_decay, weight_decay=weight_decay)
+    net = tf_layer.fully_connected(net, 512, bn=True, is_training=is_training,
+                                   scope='fc4', bn_decay=bn_decay,weight_decay=weight_decay)
+    net = tf_layer.fully_connected(net, 128, bn=True, is_training=is_training,
+                                   scope='fc5', bn_decay=bn_decay,weight_decay=weight_decay)
+    net = tf_layer.fully_connected(net, n_classes, bn=True, is_training=is_training,
+                                   scope='fc6', bn_decay=bn_decay,weight_decay=weight_decay)
+    return net
 
+''' cross entropy loss with L2 regularization'''
+def get_loss(pred, label):
+    """ pred: B*NUM_CLASSES,
+        label: B, """
+    loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=pred, labels=label)
+    classify_loss = tf.reduce_mean(loss)
+    tf.add_to_collection('losses', classify_loss)
+    losses=tf.add_n(tf.get_collection('losses'))
+    tf.summary.scalar('classify loss', classify_loss)
+    tf.summary.scalar('total loss (with l2-reg)', losses)
+    return losses
 

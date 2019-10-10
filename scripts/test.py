@@ -17,25 +17,22 @@ from utils import class2name
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 cfg = config.cfg
-LOG_DIR = 'log'
 MODEL_FILE = os.path.join(BASE_DIR,'model', 'config.py')
 
-
-
-OPTIMIZER = 'momentum' # adam or momentum
-MOMENTUM = cfg['momentum']
 BATCH_SIZE=cfg['batch_size']
 GPU_INDEX =0
 MODEL_PATH ='log/model.ckpt'
+DUMP_DIR = 'log/test'
 model=importlib.import_module('model.config')
-DUMP_DIR = 'dump'
+
 if not os.path.exists(DUMP_DIR): os.mkdir(DUMP_DIR)
 LOG_FOUT = open(os.path.join(DUMP_DIR, 'log_test.txt'), 'w')
 
 dims, max_epochs, batch_size, classes = cfg['dims'], cfg['max_epochs'], cfg['batch_size'], cfg['n_classes']
 name_dic = class2name.class_id_to_name
+n_levels, n_rings=cfg['n_levels'], cfg['n_rings']
 
-fname=r'/home/haha/Documents/PythonPrograms/datasets/shapenet10_test.tar'
+fname=r'/home/haha/Documents/PythonPrograms/datasets/ringdata_03_test.tar'
 
 
 def log_string(out_str):
@@ -47,7 +44,7 @@ def log_string(out_str):
 def data_loader(fname):
     dims = cfg['dims']
     chunk_size = cfg['n_rotations']
-    xc = np.zeros((chunk_size,)+dims, dtype=np.float32)
+    xc = np.zeros((chunk_size,n_levels,n_rings,3), dtype=np.float32)
     reader = npytar.NpyTarReader(fname)
     yc = []
     for ix, (x, name) in enumerate(reader):
@@ -55,20 +52,19 @@ def data_loader(fname):
         xc[cix] = x.astype(np.float32)
         yc.append(int(name.split('.')[0])-1)
         if len(yc) == chunk_size:
-            yield (2.0*xc - 1.0, np.asarray(yc, dtype=np.float32))
+            yield (xc, np.asarray(yc, dtype=np.float32))
             yc = []
             xc.fill(0)
     assert(len(yc)==0)
 
 
 def evaluate(num_votes):
-    is_training = False
+
 
     with tf.device('/gpu:' + str(GPU_INDEX)):
         chunk_size = cfg['n_rotations']
 
-        X_pl = tf.placeholder(tf.float32, shape=[chunk_size, 32, 32, 32],
-                              name='X')  # X = T.TensorType('float32', [False]*5)('X')
+        X_pl = tf.placeholder(tf.float32, shape=[chunk_size,n_levels,n_rings,3], name='X')
         y_pl = tf.placeholder(tf.int32, shape=[None, ], name='y')  # y = T.TensorType('int32', [False]*1)('y')
         is_training_pl = tf.placeholder(tf.bool, shape=())
 
@@ -147,6 +143,7 @@ def eval_one_epoch(sess, ops, num_votes=1, topk=1):
 
 
 if __name__ == '__main__':
-    with tf.Graph().as_default():
-        evaluate(num_votes=1)
+    # with tf.Graph().as_default():
+    #     evaluate(num_votes=1)
+    evaluate(num_votes=1)
     LOG_FOUT.close()
